@@ -80,7 +80,7 @@ void loop() {
   if (IrReceiver.decode()) {
 
     // Print a short summary of received data
-    IrReceiver.printIRResultShort(&Serial);
+    IrReceiver.printIRResultShort(&Serial);s
     if (IrReceiver.decodedIRData.protocol == UNKNOWN) {
       // We have an unknown protocol here, print more info
       IrReceiver.printIRResultRawFormatted(&Serial, true);

@@ -1,0 +1,9 @@
+Goal:
+If code stored:
+Power on, waits, sends code.
+If no code stored:
+program mode
+
+If button 1 pressed, record ( rapid blink )
+When same code received 3 times ( ignore repeats ),
+then we stop blinking and leave record mode.
