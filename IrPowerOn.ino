@@ -6,12 +6,12 @@
 // --- CONSTANTS ---
 //GPIO
 const int IR_RECEIVE_PIN = 11;
-const int ledPin =  LED_BUILTIN;
+const int ledPin = LED_BUILTIN;
 const int programButtonPin = 2;
 
 //Modes
 const int MODE_NORMAL = 0;
-const int MODE_SEND_CODE 1;
+const int MODE_SEND_CODE = 1;
 const int MODE_CODE_SENT = 2;
 
 const int MODE_PROGRAM = 10;
@@ -19,17 +19,15 @@ const int MODE_PROGRAM_COMPLETE = 11;
 
 //Blink Rates
 const long intervalProgram = 100;
-const long intervalSend = 33;
-const long intervalNormal = 1000;
+const long intervalNormal = 999;
 
 //Send intervals
-const int sendDelay = 30;
+const int sendDelay = 30 * 1000;
 const int sendRepeats = 5;
-const int sendRepeatDelay = 1;
+const int sendRepeatDelay = 1000;
 
 //Poll interval, 1/100th of a second
 const int pollInterval = 10;
-
 
 // --- GLOBAL VARS ---
 //EEPROM vars
@@ -42,11 +40,18 @@ int currentMode = MODE_NORMAL;
 //Code verification
 int sameCodeCount = 0;
 
-//LED Blink
-unsigned long previousMillis = 0;
+//LED blink millis
+unsigned long previousMillisLED = 0;
 bool ledOn = false;
 
-void setup() {
+//Send repeat millis
+unsigned long previousMillisSend = 0;
+
+//Count number of times code sent
+int codeSentCount = 0;
+
+void setup()
+{
 
   //Setup serial, IR recv, and status LED.
   Serial.begin(115200);
@@ -56,31 +61,35 @@ void setup() {
   pinMode(ledPin, OUTPUT);
   pinMode(programButtonPin, INPUT_PULLUP);
 
-
   saveAddr = EEPROM.read(0);
   saveCmd = EEPROM.read(1);
 
-  if (saveCmd > 0) {
+  if (saveCmd > 0)
+  {
     goNormalMode();
-
-  } else {
+  }
+  else
+  {
     goProgramMode();
-
   }
 }
 
-void clearTemp() {
+void clearTemp()
+{
   saveCmd = 0;
   saveAddr = 0;
   sameCodeCount = 0;
 
-  previousMillis = 0;
+  previousMillisLED = 0;
+  previousMillisSend = 0;
+
   ledOn = false;
   digitalWrite(ledPin, LOW);
 }
 
-void goProgramMode() {
-  programMode = MODE_PROGRAM;
+void goProgramMode()
+{
+  currentMode = MODE_PROGRAM;
   clearTemp();
   Serial.println("Entering program mode.");
 
@@ -89,12 +98,13 @@ void goProgramMode() {
   Serial.println(IR_RECEIVE_PIN);
 }
 
-void goNormalMode() {
-  programMode = MODE_NORMAL;
+void goNormalMode()
+{
+  currentMode = MODE_NORMAL;
   clearTemp();
 
   //Clear status LED.
-  digitalWrite(ledPin, LOW );
+  digitalWrite(ledPin, LOW);
   ledOn = false;
 
   Serial.println("Entering normal mode.");
@@ -109,60 +119,87 @@ void goNormalMode() {
 
   IrReceiver.stop();
   Serial.println("Disabling IR receiver.");
+
+  Serial.print("Sending IR code in ");
+  Serial.print(sendDelay);
+  Serial.println(" seconds!");
 }
 
-void goCompleteMode() {
-  programMode = MODE_PROGRAM_COMPLETE;
+void goCompleteMode()
+{
+  currentMode = MODE_PROGRAM_COMPLETE;
   clearTemp();
 
   //Clear status LED.
-  digitalWrite(ledPin, LOW );
+  digitalWrite(ledPin, LOW);
   ledOn = false;
 
-  Serial.println("Entering complete mode.");
-
-  IrReceiver.stop();
-  Serial.println("Disabling IR receiver.");
+  Serial.println("Entering program-complete mode.");
 }
 
-void goSendMode() {
-  programMode = MODE_SEND_CODE;
+void goSendMode()
+{
+  currentMode = MODE_SEND_CODE;
   clearTemp();
 
-  //Clear status LED.
-  digitalWrite(ledPin, LOW );
-  ledOn = false;
-
-  Serial.println("Sending IR code.");
+  //Set status LED.
+  digitalWrite(ledPin, HIGH);
+  ledOn = true;
 }
 
-void loop() {
+void goSendComplete()
+{
+  currentMode = MODE_CODE_SENT;
+  clearTemp();
+  Serial.println("IR code send complete, sleeping...");
+
+  //Clear status LED.
+  digitalWrite(ledPin, HIGH);
+  ledOn = true;
+}
+
+void loop()
+{
   //Sleep for a bit
   delay(pollInterval);
 
-  if (currentMode == MODE_PROGRAM) {
+  if (currentMode == MODE_CODE_SENT)
+  {
+    //Just sleep, nothing to do except await program mode
+    delay(100);
+  }
+  else if (currentMode == MODE_PROGRAM)
+  {
 
     //Check if it is time to blink status LED, to indicate program mode.
     unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= intervalProgram) {
-      previousMillis = currentMillis;
+    if (currentMillis - previousMillisLED >= intervalProgram)
+    {
+      previousMillisLED = currentMillis;
 
       //Blink LED
-      if (ledOn ) {
+      if (ledOn)
+      {
         ledOn = false;
-        digitalWrite(ledPin, LOW );
-      } else {
+        digitalWrite(ledPin, LOW);
+      }
+      else
+      {
         ledOn = true;
-        digitalWrite(ledPin, HIGH );
+        digitalWrite(ledPin, HIGH);
       }
     }
 
-    if (IrReceiver.decode()) {
+    if (IrReceiver.decode())
+    {
 
       Serial.println("");
-      if (IrReceiver.decodedIRData.protocol == UNKNOWN) {
+      if (IrReceiver.decodedIRData.protocol == UNKNOWN)
+      {
         Serial.println("Unknown protocol, ignored.");
-      } else {
+      }
+      else
+      {
         Serial.print("Addr ");
         Serial.println(IrReceiver.decodedIRData.address);
 
@@ -170,22 +207,28 @@ void loop() {
         Serial.println(IrReceiver.decodedIRData.command);
       }
 
-      if ( IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_AUTO_REPEAT ) {
-        //Serial.println("Repeat, not saving to EEPROM.");
-      } else {
+      if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_AUTO_REPEAT)
+      {
+        //Serial.println("Repeat-code, ignoring...");
+      }
+      else
+      {
         //Starting
-        int newAddr =  IrReceiver.decodedIRData.address;
+        int newAddr = IrReceiver.decodedIRData.address;
         int newCmd = IrReceiver.decodedIRData.command;
 
-
-        if ( sameCodeCount == 0 || ( newAddr == saveAddr && newCmd == saveCmd)) {
+        if (sameCodeCount == 0 || (newAddr == saveAddr && newCmd == saveCmd))
+        {
           saveAddr = IrReceiver.decodedIRData.address;
           saveCmd = IrReceiver.decodedIRData.command;
-          if ( sameCodeCount > 0 ) {
+          if (sameCodeCount > 0)
+          {
             Serial.println("Got same code, good!");
           }
           sameCodeCount++;
-        } else {
+        }
+        else
+        {
           saveAddr = 0;
           saveCmd = 0;
           sameCodeCount = 0;
@@ -193,37 +236,70 @@ void loop() {
         }
 
         //After the same code a few times in a row, we will assume we got the code okay
-        if ( sameCodeCount > 5 ) {
+        if (sameCodeCount > 5)
+        {
           EEPROM.write(0, newAddr);
           EEPROM.write(1, newCmd);
           Serial.println("Code appears to be good, saving in EEPROM.");
-          goNormalMode();
+          goCompleteMode();
+          return;
         }
       }
 
       IrReceiver.resume(); // Enable receiving of the next value
-
-      /*
-         Finally, check the received data and perform actions according to the received command
-      */
-      if (IrReceiver.decodedIRData.command == 0x10) {
-        // do something
-      } else if (IrReceiver.decodedIRData.command == 0x11) {
-        // do something else
-      }
     }
-  } else if (currentMode == MODE_NORMAL) {
-    //Check if it is time to send IR code.
+  }
+  else if (currentMode == MODE_NORMAL)
+  {
+    //Check if it is time to blink status LED, to indicate count down
     unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= intervalProgram) {
-      previousMillis = currentMillis;
+    if (currentMillis - previousMillisLED >= intervalNormal)
+    {
+      previousMillisLED = currentMillis;
+      digitalWrite(ledPin, HIGH);
+      delay(1);
 
+      ledOn = false;
+      digitalWrite(ledPin, LOW);
+    }
+
+    //Check if it is time to send IR code.
+    currentMillis = millis();
+    if (currentMillis - previousMillisSend >= sendDelay)
+    {
+      previousMillisSend = currentMillis;
       goSendMode();
     }
   }
+  else if (currentMode == MODE_SEND_CODE)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillisSend >= sendRepeatDelay)
+    {
+      if (codeSentCount++ < sendRepeats )
+      {
+
+      }
+
+      previousMillisSend = currentMillis;
+      digitalWrite(ledPin, HIGH);
+      delay(10);
+      //SEND IR CODE HERE
+      digitalWrite(ledPin, LOW);
+    }
+    //currentMode = MODE_CODE_SENT;
+  }
+  else if (currentMode == MODE_PROGRAM)
+  {
+    //Send IR code here
+    delay(1000);
+    Serial.println("IR code sent!");
+    goSendComplete();
+  }
 
   //Check for program button pressed
-  if (digitalRead(programButtonPin) == LOW) {
+  if (digitalRead(programButtonPin) == LOW)
+  {
     goProgramMode();
   }
 }
