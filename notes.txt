@@ -9,3 +9,4 @@ When same code received 3 times ( ignore repeats ),
 then we stop blinking and leave record mode.
 
 TODO: send IR codes, test, put in project box with cables/jacks and resistor/transitors driver setup.
+Add some more code comments and proof read everything.
