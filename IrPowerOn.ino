@@ -26,7 +26,7 @@ const long interbalpButton = 5000;
 
 //Send intervals
 const int sendDelay = 30 * 1000;
-const int sendRepeats = 3;
+const int sendRepeats = 0;
 const int sendRepeatDelay = 500;
 
 //Poll interval, 1/100th of a second
@@ -300,7 +300,7 @@ void loop()
       digitalWrite(ledPin, HIGH);
       ledOn = true;
       //SEND IR CODE
-      IrSender.sendNEC(saveAddr, saveCmd, 0);
+      IrSender.sendNEC(saveAddr, saveCmd, 2);
       Serial.println("Sending IR Code...");
       codeSentCount++;
     }
