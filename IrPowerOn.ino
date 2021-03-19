@@ -19,11 +19,11 @@ const int MODE_PROGRAM_COMPLETE = 11;
 
 //Blink Rates
 const long intervalProgram = 100;
-const long intervalNormal = 999;
+const long intervalNormal = 990;
 
 //Send intervals
 const int sendDelay = 30 * 1000;
-const int sendRepeats = 5;
+const int sendRepeats = 10;
 const int sendRepeatDelay = 1000;
 
 //Poll interval, 1/100th of a second
@@ -52,7 +52,7 @@ int codeSentCount = 0;
 
 void setup()
 {
-
+  delay(1000);
   //Setup serial, IR recv, and status LED.
   Serial.begin(115200);
   Serial.println("");
@@ -79,6 +79,7 @@ void clearTemp()
   saveCmd = 0;
   saveAddr = 0;
   sameCodeCount = 0;
+  codeSentCount = 0;
 
   previousMillisLED = 0;
   previousMillisSend = 0;
@@ -121,7 +122,7 @@ void goNormalMode()
   Serial.println("Disabling IR receiver.");
 
   Serial.print("Sending IR code in ");
-  Serial.print(sendDelay);
+  Serial.print(sendDelay/1000);
   Serial.println(" seconds!");
 }
 
@@ -142,9 +143,9 @@ void goSendMode()
   currentMode = MODE_SEND_CODE;
   clearTemp();
 
-  //Set status LED.
-  digitalWrite(ledPin, HIGH);
-  ledOn = true;
+  //Clear status LED.
+  digitalWrite(ledPin, LOW);
+  ledOn = false;
 }
 
 void goSendComplete()
@@ -154,8 +155,8 @@ void goSendComplete()
   Serial.println("IR code send complete, sleeping...");
 
   //Clear status LED.
-  digitalWrite(ledPin, HIGH);
-  ledOn = true;
+  digitalWrite(ledPin, LOW);
+  ledOn = false;
 }
 
 void loop()
@@ -163,12 +164,7 @@ void loop()
   //Sleep for a bit
   delay(pollInterval);
 
-  if (currentMode == MODE_CODE_SENT)
-  {
-    //Just sleep, nothing to do except await program mode
-    delay(100);
-  }
-  else if (currentMode == MODE_PROGRAM)
+  if (currentMode == MODE_PROGRAM)
   {
 
     //Check if it is time to blink status LED, to indicate program mode.
@@ -257,7 +253,7 @@ void loop()
     {
       previousMillisLED = currentMillis;
       digitalWrite(ledPin, HIGH);
-      delay(1);
+      delay(10);
 
       ledOn = false;
       digitalWrite(ledPin, LOW);
@@ -276,29 +272,28 @@ void loop()
     unsigned long currentMillis = millis();
     if (currentMillis - previousMillisSend >= sendRepeatDelay)
     {
-      if (codeSentCount++ < sendRepeats )
-      {
-
-      }
-
       previousMillisSend = currentMillis;
-      digitalWrite(ledPin, HIGH);
-      delay(10);
-      //SEND IR CODE HERE
       digitalWrite(ledPin, LOW);
+      delay(100);
+      digitalWrite(ledPin, HIGH);
+      ledOn = true;
+      //SEND IR CODE HERE
+      Serial.println("Sending IR Code...");
+      codeSentCount++;
     }
-    //currentMode = MODE_CODE_SENT;
+    if ( codeSentCount > sendRepeats )
+    {
+      goSendComplete();
+    }
   }
-  else if (currentMode == MODE_PROGRAM)
+  else if (currentMode == MODE_CODE_SENT)
   {
-    //Send IR code here
-    delay(1000);
-    Serial.println("IR code sent!");
-    goSendComplete();
+    //Nothing to do but look for program button, sleep
+    delay(100);
   }
 
   //Check for program button pressed
-  if (digitalRead(programButtonPin) == LOW)
+  if (currentMode != MODE_PROGRAM && digitalRead(programButtonPin) == LOW)
   {
     goProgramMode();
   }
