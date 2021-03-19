@@ -1,3 +1,5 @@
+//Written by Carl Frank Otto III
+//Version 0.0.1-03192021-0220p
 #define DECODE_NEC 1
 
 #include <IRremote.h>
@@ -20,11 +22,12 @@ const int MODE_PROGRAM_COMPLETE = 11;
 //Blink Rates
 const long intervalProgram = 100;
 const long intervalNormal = 990;
+const long interbalpButton = 5000;
 
 //Send intervals
 const int sendDelay = 30 * 1000;
-const int sendRepeats = 10;
-const int sendRepeatDelay = 1000;
+const int sendRepeats = 3;
+const int sendRepeatDelay = 500;
 
 //Poll interval, 1/100th of a second
 const int pollInterval = 10;
@@ -47,19 +50,37 @@ bool ledOn = false;
 //Send repeat millis
 unsigned long previousMillisSend = 0;
 
+//Send repeat millis
+unsigned long prevpButtonMillis = 0;
+
 //Count number of times code sent
 int codeSentCount = 0;
 
+//Previous button state
+int prevpButtonState = LOW;
+
 void setup()
 {
+  //Save current button state so we can detect a change
+  pinMode(ledPin, OUTPUT);
+  pinMode(programButtonPin, INPUT_PULLUP);
+  digitalWrite(ledPin, LOW);
+  ledOn = false;
+
+  //Solves double-reset oddness, and lets input pullup stabilize.
   delay(1000);
-  //Setup serial, IR recv, and status LED.
+  prevpButtonState = digitalRead(programButtonPin);
+
+  //Setup serial, and IR send
+  IrSender.begin(IR_SEND_PIN, true);
   Serial.begin(115200);
   Serial.println("");
   Serial.println("Starting...");
 
-  pinMode(ledPin, OUTPUT);
-  pinMode(programButtonPin, INPUT_PULLUP);
+//Setup IR send pin
+  Serial.print(F("Ready to send IR signals at pin "));
+  Serial.println(IR_SEND_PIN);
+  IrSender.begin(true);
 
   saveAddr = EEPROM.read(0);
   saveCmd = EEPROM.read(1);
@@ -83,6 +104,7 @@ void clearTemp()
 
   previousMillisLED = 0;
   previousMillisSend = 0;
+  prevpButtonMillis = millis();
 
   ledOn = false;
   digitalWrite(ledPin, LOW);
@@ -122,7 +144,7 @@ void goNormalMode()
   Serial.println("Disabling IR receiver.");
 
   Serial.print("Sending IR code in ");
-  Serial.print(sendDelay/1000);
+  Serial.print(sendDelay / 1000);
   Serial.println(" seconds!");
 }
 
@@ -277,11 +299,12 @@ void loop()
       delay(100);
       digitalWrite(ledPin, HIGH);
       ledOn = true;
-      //SEND IR CODE HERE
+      //SEND IR CODE
+      IrSender.sendNEC(saveAddr, saveCmd, 0);
       Serial.println("Sending IR Code...");
       codeSentCount++;
     }
-    if ( codeSentCount > sendRepeats )
+    if (codeSentCount >= sendRepeats)
     {
       goSendComplete();
     }
@@ -292,9 +315,19 @@ void loop()
     delay(100);
   }
 
-  //Check for program button pressed
-  if (currentMode != MODE_PROGRAM && digitalRead(programButtonPin) == LOW)
+  int curpButtonState = digitalRead(programButtonPin);
+  //Check for program button state changes
+  if (currentMode != MODE_PROGRAM && curpButtonState != prevpButtonState)
   {
-    goProgramMode();
+    //Update state
+    prevpButtonState = curpButtonState;
+
+    unsigned long currentMillis = millis();
+    //Check last time we triggered program mode
+    if (currentMillis - prevpButtonMillis >= interbalpButton)
+    {
+      prevpButtonMillis = currentMillis;
+      goProgramMode();
+    }
   }
 }
