@@ -5,6 +5,7 @@
 #include <IRremote.h>
 #include <EEPROM.h>
 
+
 // --- CONSTANTS ---
 //GPIO
 const int IR_RECEIVE_PIN = 11;
@@ -25,9 +26,9 @@ const long intervalNormal = 990;
 const long interbalpButton = 5000;
 
 //Send intervals
-const int sendDelay = 30 * 1000;
+const int sendDelay = 3 * 1000;
 const int sendRepeats = 0;
-const int sendRepeatDelay = 500;
+const int sendRepeatDelay = 50;
 
 //Poll interval, 1/100th of a second
 const int pollInterval = 10;
@@ -72,15 +73,19 @@ void setup()
   prevpButtonState = digitalRead(programButtonPin);
 
   //Setup serial, and IR send
-  IrSender.begin(IR_SEND_PIN, true);
   Serial.begin(115200);
   Serial.println("");
   Serial.println("Starting...");
 
-//Setup IR send pin
+  //Setup IR send pin
   Serial.print(F("Ready to send IR signals at pin "));
   Serial.println(IR_SEND_PIN);
-  IrSender.begin(true);
+
+#if defined(USE_SOFT_SEND_PWM) || defined(USE_NO_SEND_PWM)
+  IrSender.begin(IR_SEND_PIN, true); // Specify send pin and enable feedback LED at default feedback LED pin
+#else
+  IrSender.begin(true); // Enable feedback LED at default feedback LED pin
+#endif
 
   saveAddr = EEPROM.read(0);
   saveCmd = EEPROM.read(1);
@@ -300,7 +305,7 @@ void loop()
       digitalWrite(ledPin, HIGH);
       ledOn = true;
       //SEND IR CODE
-      IrSender.sendNEC(saveAddr, saveCmd, 2);
+      IrSender.sendNEC(saveAddr, saveCmd, 3);
       Serial.println("Sending IR Code...");
       codeSentCount++;
     }
