@@ -1,43 +1,60 @@
 //Written by Carl Frank Otto III
-//Version 0.0.1-03192021-0220p
-#define DECODE_NEC 1
-
-#include <IRremote.h>
+//Version 0.0.2-03202021-0208p
 #include <EEPROM.h>
 
+//SEEED IR library
+#include <IRLibRecvPCI.h>
+#include <IRLibSendBase.h>
+#include <IRLib_HashRaw.h>
 
-// --- CONSTANTS ---
+//IR Code storage (RAM)
+#define MAX_STORE_SIZE 254
+uint16_t storedCodes[MAX_STORE_SIZE];
+uint8_t storedCodesLength = 0;
+
+//IR pins/settings
+#define IR_RX_PIN 2
+#define IR_TX_PIN 3 //Doesn't set in lib
+#define IR_FREQ 36
+
+//Need some play in the timings because of jitter
+//freq / 1.3 == microseconds per cycle
+//Last number is the allowance percent, 1.5 == 50%, so about 42 microseconds
+#define ALLOWED_JITTER ( (IR_FREQ/1.3) * 1.5)
+
+IRrecvPCI myReceiver(IR_RX_PIN);
+IRsendRaw mySender;
+
+// --- CONSTANTS / DEFINES ---
 //GPIO
-const int IR_RECEIVE_PIN = 11;
-const int ledPin = LED_BUILTIN;
-const int programButtonPin = 2;
+#define ledPin LED_BUILTIN
+#define programButtonPin 4
 
 //Modes
-const int MODE_NORMAL = 0;
-const int MODE_SEND_CODE = 1;
-const int MODE_CODE_SENT = 2;
+#define MODE_NORMAL 0
+#define MODE_SEND_CODE 1
+#define MODE_CODE_SENT 2
 
-const int MODE_PROGRAM = 10;
-const int MODE_PROGRAM_COMPLETE = 11;
+#define MODE_PROGRAM 10
+#define MODE_PROGRAM_COMPLETE 11
 
 //Blink Rates
-const long intervalProgram = 100;
-const long intervalNormal = 990;
-const long interbalpButton = 5000;
+#define intervalProgram 100
+#define intervalNormal 990
+#define interbalpButton 5000
 
 //Send intervals
-const int sendDelay = 3 * 1000;
-const int sendRepeats = 0;
-const int sendRepeatDelay = 50;
+#define sendDelay 3000
+#define sendRepeats 3
+#define sendRepeatDelay 300
 
 //Poll interval, 1/100th of a second
-const int pollInterval = 10;
+#define pollInterval 10
+
+//Number of accepted codes needed to save
+#define goodCodesNeeded 5
 
 // --- GLOBAL VARS ---
-//EEPROM vars
-uint32_t saveAddr = 0;
-uint32_t saveCmd = 0;
-
 //Mode
 int currentMode = MODE_NORMAL;
 
@@ -69,7 +86,7 @@ void setup()
   ledOn = false;
 
   //Solves double-reset oddness, and lets input pullup stabilize.
-  delay(1000);
+  delay(500);
   prevpButtonState = digitalRead(programButtonPin);
 
   //Setup serial, and IR send
@@ -79,31 +96,28 @@ void setup()
 
   //Setup IR send pin
   Serial.print(F("Ready to send IR signals at pin "));
-  Serial.println(IR_SEND_PIN);
+  Serial.println(IR_RX_PIN);
 
-#if defined(USE_SOFT_SEND_PWM) || defined(USE_NO_SEND_PWM)
-  IrSender.begin(IR_SEND_PIN, true); // Specify send pin and enable feedback LED at default feedback LED pin
-#else
-  IrSender.begin(true); // Enable feedback LED at default feedback LED pin
-#endif
+//READ EEPROM
+int i;
+storedCodesLength = EEPROM.read(0);
+for (i=1; i < storedCodesLength; i++)
+{
+  storedCodes[i] = EEPROM.read(i);
+}
 
-  saveAddr = EEPROM.read(0);
-  saveCmd = EEPROM.read(1);
+if (storedCodesLength > 0)
+{
+  Serial.print("EEPROM read len: ");
+  Serial.println(storedCodesLength);
+}
 
-  if (saveCmd > 0)
-  {
-    goNormalMode();
-  }
-  else
-  {
-    goProgramMode();
-  }
+  goNormalMode();
+  //goProgramMode();
 }
 
 void clearTemp()
 {
-  saveCmd = 0;
-  saveAddr = 0;
   sameCodeCount = 0;
   codeSentCount = 0;
 
@@ -121,9 +135,9 @@ void goProgramMode()
   clearTemp();
   Serial.println("Entering program mode.");
 
-  IrReceiver.begin(IR_RECEIVE_PIN, DISABLE_LED_FEEDBACK);
-  Serial.print(F("Enabling IR receiver on pin "));
-  Serial.println(IR_RECEIVE_PIN);
+  myReceiver.enableIRIn(); // Start the receiver
+  Serial.print("Ready to receive IR signals on pin ");
+  Serial.println(IR_RX_PIN);
 }
 
 void goNormalMode()
@@ -136,17 +150,7 @@ void goNormalMode()
   ledOn = false;
 
   Serial.println("Entering normal mode.");
-  Serial.println("Reading values from EEPROM.");
-  saveAddr = EEPROM.read(0);
-  saveCmd = EEPROM.read(1);
-
-  Serial.print("Addr ");
-  Serial.println(saveAddr);
-  Serial.print("Cmd ");
-  Serial.println(saveCmd);
-
-  IrReceiver.stop();
-  Serial.println("Disabling IR receiver.");
+  //Get data from EEPROM HERE
 
   Serial.print("Sending IR code in ");
   Serial.print(sendDelay / 1000);
@@ -213,63 +217,81 @@ void loop()
       }
     }
 
-    if (IrReceiver.decode())
+    if (myReceiver.getResults())
     {
 
-      Serial.println("");
-      if (IrReceiver.decodedIRData.protocol == UNKNOWN)
+      //Check if code is really short, and probably a repeat code... or if it is too long to store.
+      if (recvGlobal.recvLength > 4 && recvGlobal.recvLength < MAX_STORE_SIZE)
       {
-        Serial.println("Unknown protocol, ignored.");
-      }
-      else
-      {
-        Serial.print("Addr ");
-        Serial.println(IrReceiver.decodedIRData.address);
-
-        Serial.print("Cmd ");
-        Serial.println(IrReceiver.decodedIRData.command);
-      }
-
-      if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_AUTO_REPEAT)
-      {
-        //Serial.println("Repeat-code, ignoring...");
-      }
-      else
-      {
-        //Starting
-        int newAddr = IrReceiver.decodedIRData.address;
-        int newCmd = IrReceiver.decodedIRData.command;
-
-        if (sameCodeCount == 0 || (newAddr == saveAddr && newCmd == saveCmd))
+        storedCodesLength = recvGlobal.recvLength;
+        Serial.println("");
+        Serial.print("Length: ");
+        Serial.print(recvGlobal.recvLength);
+        if (sameCodeCount==0) 
         {
-          saveAddr = IrReceiver.decodedIRData.address;
-          saveCmd = IrReceiver.decodedIRData.command;
-          if (sameCodeCount > 0)
+          Serial.println(" , Data:");
+        } else {
+          Serial.println(" , Diff:");
+        }
+
+        bool codeBad = false;
+        int i;
+        for (i = 1; i < recvGlobal.recvLength; i++)
+        {
+          if (sameCodeCount == 0)
           {
-            Serial.println("Got same code, good!");
+            storedCodes[i] = recvGlobal.recvBuffer[i];
+            Serial.print(recvGlobal.recvBuffer[i]);
+            Serial.print(", ");
           }
-          sameCodeCount++;
+          else
+          {
+            //If the codes are reasonably close ( jitter ), consider them the same
+            uint64_t diff = abs((int64_t)storedCodes[i] - (int64_t)recvGlobal.recvBuffer[i]);
+            if (diff < ALLOWED_JITTER)
+            {
+              Serial.print((uint32_t)diff);
+              Serial.print(", ");
+            }
+            else
+            {
+              Serial.print("BAD, ");
+              codeBad = true;
+            }
+          }
+          if (i % 20 == 0)
+          {
+            Serial.println("");
+          }
         }
-        else
-        {
-          saveAddr = 0;
-          saveCmd = 0;
-          sameCodeCount = 0;
-          Serial.println("Got different code, starting over.");
-        }
+        Serial.println("END.");
 
-        //After the same code a few times in a row, we will assume we got the code okay
-        if (sameCodeCount > 5)
+        if (!codeBad)
         {
-          EEPROM.write(0, newAddr);
-          EEPROM.write(1, newCmd);
-          Serial.println("Code appears to be good, saving in EEPROM.");
-          goCompleteMode();
-          return;
+          sameCodeCount++;
+          if (sameCodeCount > goodCodesNeeded) {
+            Serial.println("Codes appear good, saving to EEPROM!");
+
+            int i;
+            EEPROM.write(0, storedCodesLength);
+            for ( i=1; i < storedCodesLength; i++ )
+            {
+              EEPROM.write(i, storedCodes[i]);
+            }
+            goCompleteMode();
+          }
+        } else {
+          Serial.println ("Code didn't match!!! Starting over!");
+          sameCodeCount = 0;
         }
       }
+      else
+      {
+        Serial.println("Code is invalid, or a repeat code... skipping.");
+      }
 
-      IrReceiver.resume(); // Enable receiving of the next value
+      //This should get skipped once code is verified as good.
+      myReceiver.enableIRIn();
     }
   }
   else if (currentMode == MODE_NORMAL)
@@ -304,8 +326,9 @@ void loop()
       delay(100);
       digitalWrite(ledPin, HIGH);
       ledOn = true;
+
       //SEND IR CODE
-      IrSender.sendNEC(saveAddr, saveCmd, 3);
+      mySender.send(storedCodes, storedCodesLength, IR_FREQ);
       Serial.println("Sending IR Code...");
       codeSentCount++;
     }
