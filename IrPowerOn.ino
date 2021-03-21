@@ -8,7 +8,7 @@
 #include <IRLib_HashRaw.h>
 
 //IR Code storage (RAM)
-#define MAX_STORE_SIZE 254
+#define MAX_STORE_SIZE 255
 uint16_t storedCodes[MAX_STORE_SIZE];
 uint8_t storedCodesLength = 0;
 
@@ -19,8 +19,10 @@ uint8_t storedCodesLength = 0;
 
 //Need some play in the timings because of jitter
 //freq / 1.3 == microseconds per cycle
-//Last number is the allowance percent, 1.5 == 50%, so about 42 microseconds
-#define ALLOWED_JITTER ( (IR_FREQ/1.3) * 1.5)
+//Last number is the allowance percent, 1.5 == 50%, so about 34 microseconds
+#define ALLOWED_JITTER ((IR_FREQ / 1.3) * 1.25)
+//Number of accepted codes needed to save
+#define goodCodesNeeded 5
 
 IRrecvPCI myReceiver(IR_RX_PIN);
 IRsendRaw mySender;
@@ -44,15 +46,12 @@ IRsendRaw mySender;
 #define interbalpButton 5000
 
 //Send intervals
-#define sendDelay 30000
-#define sendRepeats 3
-#define sendRepeatDelay 50
+#define sendDelay 3000
+#define sendRepeats 0
+#define sendRepeatDelay 100
 
 //Poll interval, 1/100th of a second
 #define pollInterval 10
-
-//Number of accepted codes needed to save
-#define goodCodesNeeded 5
 
 // --- GLOBAL VARS ---
 //Mode
@@ -77,6 +76,18 @@ int codeSentCount = 0;
 //Previous button state
 int prevpButtonState = LOW;
 
+void writeUnsignedIntIntoEEPROM(int address, uint16_t number)
+{ 
+  EEPROM.write(address, number >> 8);
+  EEPROM.write(address + 1, number & 0xFF);
+}
+
+
+uint16_t readUnsignedIntFromEEPROM(int address)
+{
+  return (EEPROM.read(address) << 8) + EEPROM.read(address + 1);
+}
+
 void setup()
 {
   //Save current button state so we can detect a change
@@ -98,22 +109,31 @@ void setup()
   Serial.print(F("Ready to send IR signals at pin "));
   Serial.println(IR_RX_PIN);
 
-//READ EEPROM
-int i;
-storedCodesLength = EEPROM.read(0);
-for (i=1; i < storedCodesLength; i++)
-{
-  storedCodes[i] = EEPROM.read(i);
-}
+  //READ EEPROM
+  int i;
+  
+  storedCodesLength = EEPROM.read(0);
+  if (storedCodesLength > 0)
+  {
+    Serial.print("EEPROM read len: ");
+    Serial.println(storedCodesLength);
+    for (i = 1; i < storedCodesLength; i++ )
+    {
+      storedCodes[i] = readUnsignedIntFromEEPROM(i*2);
 
-if (storedCodesLength > 0)
-{
-  Serial.print("EEPROM read len: ");
-  Serial.println(storedCodesLength);
-}
+      Serial.print(storedCodes[i]);
+      Serial.print(", ");
 
-  goNormalMode();
-  //goProgramMode();
+      if (i % 20 == 0)
+      {
+        Serial.println("");
+      }
+    }
+    goNormalMode();
+    return;
+  }
+
+  goProgramMode();
 }
 
 void clearTemp()
@@ -173,10 +193,6 @@ void goSendMode()
 {
   currentMode = MODE_SEND_CODE;
   clearTemp();
-
-  //Clear status LED.
-  digitalWrite(ledPin, LOW);
-  ledOn = false;
 }
 
 void goSendComplete()
@@ -194,6 +210,22 @@ void loop()
 {
   //Sleep for a bit
   delay(pollInterval);
+
+  int curpButtonState = digitalRead(programButtonPin);
+  //Check for program button state changes
+  if (currentMode != MODE_PROGRAM && curpButtonState != prevpButtonState)
+  {
+    //Update state
+    prevpButtonState = curpButtonState;
+
+    unsigned long currentMillis = millis();
+    //Check last time we triggered program mode
+    if (currentMillis - prevpButtonMillis >= interbalpButton)
+    {
+      prevpButtonMillis = currentMillis;
+      goProgramMode();
+    }
+  }
 
   if (currentMode == MODE_PROGRAM)
   {
@@ -227,21 +259,23 @@ void loop()
         Serial.println("");
         Serial.print("Length: ");
         Serial.print(recvGlobal.recvLength);
-        if (sameCodeCount==0) 
+        if (sameCodeCount == 0)
         {
           Serial.println(" , Data:");
-        } else {
+        }
+        else
+        {
           Serial.println(" , Diff:");
         }
 
         bool codeBad = false;
         int i;
-        for (i = 1; i < recvGlobal.recvLength; i++)
+        for (i = 1; i < storedCodesLength; i++)
         {
           if (sameCodeCount == 0)
           {
             storedCodes[i] = recvGlobal.recvBuffer[i];
-            Serial.print(recvGlobal.recvBuffer[i]);
+            Serial.print(storedCodes[i]);
             Serial.print(", ");
           }
           else
@@ -269,19 +303,22 @@ void loop()
         if (!codeBad)
         {
           sameCodeCount++;
-          if (sameCodeCount > goodCodesNeeded) {
+          if (sameCodeCount > goodCodesNeeded)
+          {
             Serial.println("Codes appear good, saving to EEPROM!");
 
             int i;
             EEPROM.write(0, storedCodesLength);
-            for ( i=1; i < storedCodesLength; i++ )
+            for (i = 1; i < storedCodesLength; i++)
             {
-              EEPROM.write(i, storedCodes[i]);
+              writeUnsignedIntIntoEEPROM(i*2, storedCodes[i]);
             }
             goCompleteMode();
           }
-        } else {
-          Serial.println ("Code didn't match!!! Starting over!");
+        }
+        else
+        {
+          Serial.println("Code didn't match!!! Starting over!");
           sameCodeCount = 0;
         }
       }
@@ -322,14 +359,15 @@ void loop()
     if (currentMillis - previousMillisSend >= sendRepeatDelay)
     {
       previousMillisSend = currentMillis;
-      digitalWrite(ledPin, LOW);
-      delay(100);
-      digitalWrite(ledPin, HIGH);
-      ledOn = true;
 
       //SEND IR CODE
       mySender.send(storedCodes, storedCodesLength, IR_FREQ);
       Serial.println("Sending IR Code...");
+
+      digitalWrite(ledPin, HIGH);
+      delay(500);
+      digitalWrite(ledPin, LOW);
+      ledOn = false;
       codeSentCount++;
     }
     if (codeSentCount >= sendRepeats)
@@ -340,22 +378,5 @@ void loop()
   else if (currentMode == MODE_CODE_SENT)
   {
     //Nothing to do but look for program button, sleep
-    delay(100);
-  }
-
-  int curpButtonState = digitalRead(programButtonPin);
-  //Check for program button state changes
-  if (currentMode != MODE_PROGRAM && curpButtonState != prevpButtonState)
-  {
-    //Update state
-    prevpButtonState = curpButtonState;
-
-    unsigned long currentMillis = millis();
-    //Check last time we triggered program mode
-    if (currentMillis - prevpButtonMillis >= interbalpButton)
-    {
-      prevpButtonMillis = currentMillis;
-      goProgramMode();
-    }
   }
 }
