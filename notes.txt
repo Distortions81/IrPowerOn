@@ -1,2 +1,0 @@
-TODO: Test, put in project box with cables/jacks and resistor/transitors driver setup.
-Add some more code comments and proof read everything.
