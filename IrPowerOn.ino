@@ -1,5 +1,6 @@
 //Written by Carl Frank Otto III
-//Version 0.0.2-03202021-0208p
+//carlotto81@gmail.com
+//Version 0.0.2-03202021-0814p
 #include <EEPROM.h>
 
 //SEEED IR library
@@ -13,15 +14,16 @@ uint16_t storedCodes[MAX_STORE_SIZE];
 uint8_t storedCodesLength = 0;
 
 //IR pins/settings
-#define IR_RX_PIN 2
+#define IR_RX_PIN 2 //IR detector (demodulated)
 #define IR_TX_PIN 3 //Doesn't set in lib
-#define IR_FREQ 36
+#define IR_FREQ 36  //Khz
 
 //Need some play in the timings because of jitter
-//freq / 1.3 == microseconds per cycle
-//Last number is the allowance percent, 1.5 == 50%, so about 34 microseconds
+//freq / 1.5 == microseconds per cycle
+//Last number is the allowance percent, 1.5 == 50%, so about 41 microseconds
 #define ALLOWED_JITTER ((IR_FREQ / 1.3) * 1.5)
-//Number of accepted codes needed to save
+
+//Number of good codes needed to end program mode and save
 #define goodCodesNeeded 5
 
 IRrecvPCI myReceiver(IR_RX_PIN);
@@ -43,11 +45,13 @@ IRsendRaw mySender;
 //Blink Rates
 #define intervalProgram 100
 #define intervalNormal 990
+
+//Program button debounce
 #define interbalpButton 500
 
 //Send intervals
-#define sendDelay 3000
-#define sendRepeats 0
+#define sendDelay 30000 //30 seconds
+#define sendRepeats 0   //Send code more than once
 #define sendRepeatDelay 50
 
 // --- GLOBAL VARS ---
@@ -64,7 +68,7 @@ bool ledOn = false;
 //Send repeat millis
 unsigned long previousMillisSend = 0;
 
-//Send repeat millis
+//Button debounce millis
 unsigned long prevpButtonMillis = 0;
 
 //Count number of times code sent
@@ -73,22 +77,27 @@ int codeSentCount = 0;
 //Previous button state
 int prevpButtonState = LOW;
 
+//Split up, eeprom only stores 8 bits
 void writeUnsignedIntIntoEEPROM(int address, uint16_t number)
 {
   EEPROM.write(address, number >> 8);
   EEPROM.write(address + 1, number & 0xFF);
 }
 
+//Split up, eeprom only stores 8 bits
 uint16_t readUnsignedIntFromEEPROM(int address)
 {
   return (EEPROM.read(address) << 8) + EEPROM.read(address + 1);
 }
 
+//Powerup
 void setup()
 {
-  //Save current button state so we can detect a change
+  //Setup pins
   pinMode(ledPin, OUTPUT);
   pinMode(programButtonPin, INPUT_PULLUP);
+
+  //Turn off status LED
   digitalWrite(ledPin, LOW);
   ledOn = false;
 
@@ -101,55 +110,67 @@ void setup()
   Serial.println("");
   Serial.println("Starting...");
 
-int i;
-  for (i = 0; i < MAX_STORE_SIZE; i++)
-  {
-    storedCodes[i] = 0;
-  }
-
   //Setup IR send pin
   Serial.print(F("Ready to send IR signals at pin "));
   Serial.println(IR_RX_PIN);
 
   //READ EEPROM
   storedCodesLength = EEPROM.read(0);
+
+  //Don't bother if there is no stored code
   if (storedCodesLength > 0)
   {
     Serial.print("EEPROM read len: ");
     Serial.println(storedCodesLength);
     for (i = 0; i < storedCodesLength; i++)
     {
+
+      //Multiplied, EEPROM only stores 8 bits per address
       storedCodes[i] = readUnsignedIntFromEEPROM((i + 1) * 2);
 
+      //print the code out
       Serial.print(storedCodes[i]);
       Serial.print(", ");
 
+      //Formatting
       if (i % 20 == 0)
       {
         Serial.println("");
       }
     }
     Serial.println("END");
+
+    //All set, start send timer
     goNormalMode();
+
+    //Exit
     return;
   }
 
   goProgramMode();
 }
 
+//For clearing all temporary vars
 void clearTemp()
+
 {
+  //Reset programming mode vars
   sameCodeCount = 0;
+
+  //Reset code send vars
   codeSentCount = 0;
 
+  //Reset timers
   previousMillisLED = 0;
   previousMillisSend = 0;
   prevpButtonMillis = 0;
 
+  //Turn off status LED, in case it was left on.
   ledOn = false;
   digitalWrite(ledPin, LOW);
 }
 
+//Attempt to capture a IR code
 void goProgramMode()
 {
   currentMode = MODE_PROGRAM;
@@ -157,6 +178,7 @@ void goProgramMode()
   Serial.println("Entering program mode.");
 
   myReceiver.enableIRIn(); // Start the receiver
+
   Serial.print("Ready to receive IR signals on pin ");
   Serial.println(IR_RX_PIN);
 }
@@ -178,6 +200,7 @@ void goNormalMode()
   Serial.println(" seconds!");
 }
 
+//This mode can be used if you want nothing to happen after program mode
 void goCompleteMode()
 {
   currentMode = MODE_PROGRAM_COMPLETE;
@@ -190,12 +213,14 @@ void goCompleteMode()
   Serial.println("Entering program-complete mode.");
 }
 
+//Prep to send IR code
 void goSendMode()
 {
   currentMode = MODE_SEND_CODE;
   clearTemp();
 }
 
+//Can be used if you want to just sit after sending IR code
 void goSendComplete()
 {
   currentMode = MODE_CODE_SENT;
@@ -207,18 +232,19 @@ void goSendComplete()
   ledOn = false;
 }
 
+//Main loop
 void loop()
 {
 
-  int curpButtonState = digitalRead(programButtonPin);
   //Check for program button state changes
+  int curpButtonState = digitalRead(programButtonPin);
   if (currentMode != MODE_PROGRAM && curpButtonState != prevpButtonState)
   {
     //Update state
     prevpButtonState = curpButtonState;
 
-    unsigned long currentMillis = millis();
     //Check last time we triggered program mode
+    unsigned long currentMillis = millis();
     if (currentMillis - prevpButtonMillis >= interbalpButton)
     {
       prevpButtonMillis = currentMillis;
@@ -228,7 +254,6 @@ void loop()
 
   if (currentMode == MODE_PROGRAM)
   {
-
     //Check if it is time to blink status LED, to indicate program mode.
     unsigned long currentMillis = millis();
     if (currentMillis - previousMillisLED >= intervalProgram)
@@ -251,15 +276,17 @@ void loop()
     if (myReceiver.getResults())
     {
 
-      //Check if code is really short, and probably a repeat code... or if it is too long to store.
+      //Check if code is really short, probably repeat code or corrupt data
+      //Also reject if it is too long to store.
       if (recvGlobal.recvLength > 4 && recvGlobal.recvLength < MAX_STORE_SIZE)
       {
         storedCodesLength = recvGlobal.recvLength;
-        storedCodes[storedCodesLength] = 1000;
+        storedCodes[storedCodesLength] = 1000; //Just a end marker
 
         Serial.println("");
         Serial.print("Length: ");
         Serial.print(recvGlobal.recvLength);
+
         if (sameCodeCount == 0)
         {
           Serial.println(" , Data:");
@@ -273,27 +300,32 @@ void loop()
         int i;
         for (i = 1; i < storedCodesLength; i++)
         {
+
+          //First code, just store it
           if (sameCodeCount == 0)
           {
             storedCodes[i] = recvGlobal.recvBuffer[i];
             Serial.print(storedCodes[i]);
             Serial.print(", ");
           }
-          else
+          else //Not first code, check if it is acceptable
           {
             //If the codes are reasonably close ( jitter ), consider them the same
             uint64_t diff = abs((int64_t)storedCodes[i] - (int64_t)recvGlobal.recvBuffer[i]);
             if (diff < ALLOWED_JITTER)
             {
+              //Print difference
               Serial.print((uint32_t)diff);
               Serial.print(", ");
             }
             else
             {
+              //Bad code, mark it
               Serial.print("BAD, ");
               codeBad = true;
             }
           }
+          //Formatting
           if (i % 20 == 0)
           {
             Serial.println("");
@@ -301,9 +333,13 @@ void loop()
         }
         Serial.println("END.");
 
+        //We got a good match
         if (!codeBad)
         {
+          //Count it
           sameCodeCount++;
+
+          //If we got enough good codes, accept it and save
           if (sameCodeCount > goodCodesNeeded)
           {
             Serial.println("Codes appear good, saving to EEPROM!");
@@ -312,6 +348,7 @@ void loop()
             EEPROM.write(0, storedCodesLength);
             for (i = 0; i < storedCodesLength; i++)
             {
+              //eeprom only stores 8 bits, so we split it up
               writeUnsignedIntIntoEEPROM((i + 1) * 2, storedCodes[i]);
             }
             goNormalMode();
@@ -319,12 +356,14 @@ void loop()
         }
         else
         {
+          //Not a good match, start over just in case first code was corrupt
           Serial.println("Code didn't match!!! Starting over!");
           sameCodeCount = 0;
         }
       }
       else
       {
+        //Code isn't long enough, just ignore it
         Serial.println("Code is invalid, or a repeat code... skipping.");
       }
 
