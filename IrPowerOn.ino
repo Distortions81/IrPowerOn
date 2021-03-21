@@ -48,7 +48,7 @@ IRsendRaw mySender;
 //Send intervals
 #define sendDelay 3000
 #define sendRepeats 0
-#define sendRepeatDelay 100
+#define sendRepeatDelay 0
 
 //Poll interval, 1/100th of a second
 #define pollInterval 10
@@ -77,11 +77,10 @@ int codeSentCount = 0;
 int prevpButtonState = LOW;
 
 void writeUnsignedIntIntoEEPROM(int address, uint16_t number)
-{ 
+{
   EEPROM.write(address, number >> 8);
   EEPROM.write(address + 1, number & 0xFF);
 }
-
 
 uint16_t readUnsignedIntFromEEPROM(int address)
 {
@@ -97,7 +96,7 @@ void setup()
   ledOn = false;
 
   //Solves double-reset oddness, and lets input pullup stabilize.
-  delay(500);
+  delay(100);
   prevpButtonState = digitalRead(programButtonPin);
 
   //Setup serial, and IR send
@@ -111,15 +110,14 @@ void setup()
 
   //READ EEPROM
   int i;
-  
   storedCodesLength = EEPROM.read(0);
   if (storedCodesLength > 0)
   {
     Serial.print("EEPROM read len: ");
     Serial.println(storedCodesLength);
-    for (i = 1; i < storedCodesLength; i++ )
+    for (i = 1; i < storedCodesLength; i++)
     {
-      storedCodes[i] = readUnsignedIntFromEEPROM(i*2);
+      storedCodes[i] = readUnsignedIntFromEEPROM(i * 2);
 
       Serial.print(storedCodes[i]);
       Serial.print(", ");
@@ -129,7 +127,7 @@ void setup()
         Serial.println("");
       }
     }
-    Serial.println("");
+    Serial.println("END");
     goNormalMode();
     return;
   }
@@ -257,6 +255,8 @@ void loop()
       if (recvGlobal.recvLength > 4 && recvGlobal.recvLength < MAX_STORE_SIZE)
       {
         storedCodesLength = recvGlobal.recvLength;
+        storedCodes[storedCodesLength] = 1000;
+
         Serial.println("");
         Serial.print("Length: ");
         Serial.print(recvGlobal.recvLength);
@@ -312,7 +312,7 @@ void loop()
             EEPROM.write(0, storedCodesLength);
             for (i = 1; i < storedCodesLength; i++)
             {
-              writeUnsignedIntIntoEEPROM(i*2, storedCodes[i]);
+              writeUnsignedIntIntoEEPROM(i * 2, storedCodes[i]);
             }
             goCompleteMode();
           }
@@ -362,13 +362,10 @@ void loop()
       previousMillisSend = currentMillis;
 
       //SEND IR CODE
+      delay(100);
       mySender.send(storedCodes, storedCodesLength, IR_FREQ);
+      delay(100);
       Serial.println("Sending IR Code...");
-
-      digitalWrite(ledPin, HIGH);
-      delay(500);
-      digitalWrite(ledPin, LOW);
-      ledOn = false;
       codeSentCount++;
     }
     if (codeSentCount >= sendRepeats)
