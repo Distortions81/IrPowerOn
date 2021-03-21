@@ -129,6 +129,7 @@ void setup()
         Serial.println("");
       }
     }
+    Serial.println("");
     goNormalMode();
     return;
   }
