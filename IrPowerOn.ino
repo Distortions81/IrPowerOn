@@ -122,6 +122,7 @@ void setup()
   {
     Serial.print("EEPROM read len: ");
     Serial.println(storedCodesLength);
+    int i;
     for (i = 0; i < storedCodesLength; i++)
     {
 
