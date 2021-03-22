@@ -46,7 +46,7 @@ IRsendRaw mySender;
 #define interbalpButton 500
 
 //Send intervals
-#define sendDelay 3000
+#define sendDelay 15000
 #define sendRepeats 0
 #define sendRepeatDelay 50
 
