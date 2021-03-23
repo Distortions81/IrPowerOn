@@ -5,12 +5,12 @@
 #include <IRremote.h>
 #include <EEPROM.h>
 
-
 // --- CONSTANTS ---
 //GPIO
-const int IR_RECEIVE_PIN = 11;
+const int IR_RECEIVE_PIN = 2;
 const int ledPin = LED_BUILTIN;
-const int programButtonPin = 2;
+const int programButtonPin = 4;
+#define IR_SEND_PIN 3
 
 //Modes
 const int MODE_NORMAL = 0;
@@ -35,8 +35,8 @@ const int pollInterval = 10;
 
 // --- GLOBAL VARS ---
 //EEPROM vars
-uint32_t saveAddr = 0;
-uint32_t saveCmd = 0;
+uint16_t saveAddr = 0;
+uint16_t saveCmd = 0;
 
 //Mode
 int currentMode = MODE_NORMAL;
@@ -59,6 +59,17 @@ int codeSentCount = 0;
 
 //Previous button state
 int prevpButtonState = LOW;
+
+void writeUnsignedIntIntoEEPROM(int address, uint16_t number)
+{
+  EEPROM.write(address, number >> 8);
+  EEPROM.write(address + 1, number & 0xFF);
+}
+
+uint16_t readUnsignedIntFromEEPROM(int address)
+{
+  return (EEPROM.read(address) << 8) + EEPROM.read(address + 1);
+}
 
 void setup()
 {
@@ -87,8 +98,8 @@ void setup()
   IrSender.begin(true); // Enable feedback LED at default feedback LED pin
 #endif
 
-  saveAddr = EEPROM.read(0);
-  saveCmd = EEPROM.read(1);
+  saveAddr = readUnsignedIntFromEEPROM(0);
+  saveCmd = readUnsignedIntFromEEPROM(2);
 
   if (saveCmd > 0)
   {
@@ -137,8 +148,8 @@ void goNormalMode()
 
   Serial.println("Entering normal mode.");
   Serial.println("Reading values from EEPROM.");
-  saveAddr = EEPROM.read(0);
-  saveCmd = EEPROM.read(1);
+  saveAddr = readUnsignedIntFromEEPROM(0);
+  saveCmd = readUnsignedIntFromEEPROM(2);
 
   Serial.print("Addr ");
   Serial.println(saveAddr);
@@ -216,6 +227,9 @@ void loop()
     if (IrReceiver.decode())
     {
 
+      uint16_t newAddr = IrReceiver.decodedIRData.address;
+      uint16_t newCmd = IrReceiver.decodedIRData.command;
+
       Serial.println("");
       if (IrReceiver.decodedIRData.protocol == UNKNOWN)
       {
@@ -223,11 +237,12 @@ void loop()
       }
       else
       {
+        //Starting
         Serial.print("Addr ");
-        Serial.println(IrReceiver.decodedIRData.address);
+        Serial.println(newAddr);
 
         Serial.print("Cmd ");
-        Serial.println(IrReceiver.decodedIRData.command);
+        Serial.println(newCmd);
       }
 
       if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_AUTO_REPEAT)
@@ -237,17 +252,15 @@ void loop()
       else
       {
         //Starting
-        int newAddr = IrReceiver.decodedIRData.address;
-        int newCmd = IrReceiver.decodedIRData.command;
 
         if (sameCodeCount == 0 || (newAddr == saveAddr && newCmd == saveCmd))
         {
-          saveAddr = IrReceiver.decodedIRData.address;
-          saveCmd = IrReceiver.decodedIRData.command;
           if (sameCodeCount > 0)
           {
             Serial.println("Got same code, good!");
           }
+          saveAddr = newAddr;
+          saveCmd = newCmd;
           sameCodeCount++;
         }
         else
@@ -261,8 +274,10 @@ void loop()
         //After the same code a few times in a row, we will assume we got the code okay
         if (sameCodeCount > 5)
         {
-          EEPROM.write(0, newAddr);
-          EEPROM.write(1, newCmd);
+          writeUnsignedIntIntoEEPROM(0, newAddr);
+          writeUnsignedIntIntoEEPROM(2, newCmd);
+
+
           Serial.println("Code appears to be good, saving in EEPROM.");
           goCompleteMode();
           return;
@@ -305,7 +320,9 @@ void loop()
       digitalWrite(ledPin, HIGH);
       ledOn = true;
       //SEND IR CODE
-      IrSender.sendNEC(saveAddr, saveCmd, 3);
+      IrSender.sendNEC(51178, 23, 3);
+      delay(100);
+      IrSender.sendNEC(51178, 151, 3);
       Serial.println("Sending IR Code...");
       codeSentCount++;
     }
